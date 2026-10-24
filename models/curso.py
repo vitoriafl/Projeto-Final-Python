@@ -11,7 +11,6 @@ from utils.helpers import nome_do_nivel
 class Curso:
     """Representa um curso oferecido pela faculdade."""
 
-    # Nomes das colunas, na mesma ordem de para_lista() (usado na exportação CSV)
     CAMPOS = ["codigo", "codigo_nivel", "nivel", "nome", "sigla", "periodo"]
 
     def __init__(self, codigo, codigo_nivel, nome, sigla, periodo):
@@ -26,7 +25,6 @@ class Curso:
         """
         self.codigo = codigo
         self.codigo_nivel = codigo_nivel.upper()
-        # O nome do nível é obtido a partir da letra, evitando digitação repetida
         self.nivel = nome_do_nivel(codigo_nivel)
         self.nome = nome
         self.sigla = sigla

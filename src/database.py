@@ -15,16 +15,17 @@ Funções principais:
         listam os registros, com filtro opcional.
     importar_alunos_csv: importa os alunos enviados pela Diretoria Acadêmica.
     exportar_csv: grava uma listagem em arquivo CSV.
+
+Observação sobre o SQL: os valores digitados pelo usuário são enviados
+separados do comando, no lugar dos '?'. Assim, um nome com aspas (ex.: D'Ávila)
+não quebra o comando nem permite alterar o SQL (SQL injection).
 """
 
-import csv
 import sqlite3
-from datetime import datetime
 
 from models import Aluno, Colaborador, Outro, Curso
 from utils import converter_data_iso, data_hoje, nome_do_nivel
 
-# Consultas base de cada tabela (as colunas seguem a ordem dos construtores)
 SQL_CURSO = "SELECT codigo, codigo_nivel, nome, sigla, periodo FROM curso"
 SQL_ALUNO = (
     "SELECT nome, nome_social, data_cadastro, matricula, codigo_curso, "
@@ -40,6 +41,11 @@ SQL_OUTRO = (
     "FROM outro"
 )
 
+# Colunas do CSV da Diretoria Acadêmica (posições 0 a 10):
+# nome, nome_social, ra, curso, nivel, pingr, tpering, ingresso, perult, tperult, aperult
+TOTAL_COLUNAS_CSV = 11
+COLUNAS_NUMERICAS_CSV = [2, 3, 5, 7, 8, 10]
+
 
 def conectar(caminho_banco):
     """Abre a conexão com o banco de dados SQLite.
@@ -51,8 +57,8 @@ def conectar(caminho_banco):
         sqlite3.Connection: conexão aberta com o banco.
     """
     conexao = sqlite3.connect(caminho_banco)
-    # Liga a verificação das chaves estrangeiras (aluno -> curso)
-    conexao.execute("PRAGMA foreign_keys = ON")
+    cursor = conexao.cursor()
+    cursor.execute("PRAGMA foreign_keys = ON")
     return conexao
 
 
@@ -64,18 +70,11 @@ def executar(conexao, sql, parametros=(), confirmar=True):
         sql (str): comando SQL com '?' no lugar dos valores.
         parametros (tuple, optional): valores do comando.
         confirmar (bool, optional): se True, grava (commit) na hora.
-
-    Returns:
-        bool: True se deu certo, False se violou alguma regra do banco
-        (registro repetido, curso inexistente etc.).
     """
-    try:
-        conexao.execute(sql, parametros)
-        if confirmar:
-            conexao.commit()
-        return True
-    except sqlite3.IntegrityError:
-        return False
+    cursor = conexao.cursor()
+    cursor.execute(sql, parametros)
+    if confirmar:
+        conexao.commit()
 
 
 def consultar(conexao, sql, parametros=()):
@@ -89,8 +88,23 @@ def consultar(conexao, sql, parametros=()):
     Returns:
         list: lista de tuplas com o resultado.
     """
-    cursor = conexao.execute(sql, parametros)
+    cursor = conexao.cursor()
+    cursor.execute(sql, parametros)
     return cursor.fetchall()
+
+
+def existe(conexao, sql, parametros):
+    """Verifica se uma consulta encontra pelo menos um registro.
+
+    Args:
+        conexao (sqlite3.Connection): conexão com o banco.
+        sql (str): consulta SQL com '?' no lugar dos valores.
+        parametros (tuple): valores da consulta.
+
+    Returns:
+        bool: True se encontrou algum registro.
+    """
+    return len(consultar(conexao, sql, parametros)) > 0
 
 
 def padronizar_datas(conexao):
@@ -107,18 +121,20 @@ def padronizar_datas(conexao):
         ("colaborador", "expiracao"),
         ("outro", "expiracao"),
     ]
-    for tabela, coluna in colunas_de_data:
+    for tabela_coluna in colunas_de_data:
+        tabela = tabela_coluna[0]
+        coluna = tabela_coluna[1]
         # Nomes de tabela/coluna vêm da lista acima (fixa), nunca do usuário
         sql = f"SELECT usuario, {coluna} FROM {tabela} WHERE {coluna} LIKE '____-__-__'"
-        for usuario, data in consultar(conexao, sql):
+        for linha in consultar(conexao, sql):
+            usuario = linha[0]
+            data = linha[1]
             executar(conexao,
                      f"UPDATE {tabela} SET {coluna} = ? WHERE usuario = ?",
                      (converter_data_iso(data), usuario),
                      confirmar=False)
     conexao.commit()
 
-
-# ---------------------------------------------------------------- Cadastros
 
 def inserir_curso(conexao, curso, confirmar=True):
     """Grava um curso no banco.
@@ -131,13 +147,18 @@ def inserir_curso(conexao, curso, confirmar=True):
     Returns:
         bool: True se gravou, False se o curso já existia.
     """
+    if curso_existe(conexao, curso.codigo, curso.codigo_nivel):
+        return False
     sql = ("INSERT INTO curso (codigo, codigo_nivel, nivel, nome, sigla, periodo) "
            "VALUES (?, ?, ?, ?, ?, ?)")
-    return executar(conexao, sql, tuple(curso.para_lista()), confirmar)
+    executar(conexao, sql, tuple(curso.para_lista()), confirmar)
+    return True
 
 
 def inserir_aluno(conexao, aluno, confirmar=True):
     """Grava um aluno no banco.
+
+    O curso do aluno precisa estar cadastrado antes (chave estrangeira).
 
     Args:
         conexao (sqlite3.Connection): conexão com o banco.
@@ -145,14 +166,18 @@ def inserir_aluno(conexao, aluno, confirmar=True):
         confirmar (bool, optional): se True, grava (commit) na hora.
 
     Returns:
-        bool: True se gravou, False se a matrícula/usuário já existia
-        ou se o curso não está cadastrado.
+        bool: True se gravou, False se a matrícula/usuário já existia.
     """
+    if existe(conexao,
+              "SELECT usuario FROM aluno WHERE usuario = ? OR matricula = ?",
+              (aluno.usuario, aluno.matricula)):
+        return False
     sql = ("INSERT INTO aluno (usuario, nome, nome_social, data_cadastro, "
            "matricula, codigo_curso, nivel_curso, semestre_ingresso, "
            "ano_ingresso, semestre_maximo, ano_maximo, ativo) "
            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    return executar(conexao, sql, tuple(aluno.para_lista()), confirmar)
+    executar(conexao, sql, tuple(aluno.para_lista()), confirmar)
+    return True
 
 
 def inserir_colaborador(conexao, colaborador):
@@ -165,9 +190,14 @@ def inserir_colaborador(conexao, colaborador):
     Returns:
         bool: True se gravou, False se o usuário/matrícula já existia.
     """
+    if existe(conexao,
+              "SELECT usuario FROM colaborador WHERE usuario = ? OR matricula = ?",
+              (colaborador.usuario, colaborador.matricula)):
+        return False
     sql = ("INSERT INTO colaborador (usuario, nome, nome_social, matricula, "
            "funcao, email, secao, expiracao) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    return executar(conexao, sql, tuple(colaborador.para_lista()))
+    executar(conexao, sql, tuple(colaborador.para_lista()))
+    return True
 
 
 def inserir_outro(conexao, outro):
@@ -180,9 +210,13 @@ def inserir_outro(conexao, outro):
     Returns:
         bool: True se gravou, False se o usuário já existia.
     """
+    if existe(conexao, "SELECT usuario FROM outro WHERE usuario = ?",
+              (outro.usuario,)):
+        return False
     sql = ("INSERT INTO outro (usuario, nome, nome_social, documento, motivo, "
            "expiracao) VALUES (?, ?, ?, ?, ?, ?)")
-    return executar(conexao, sql, tuple(outro.para_lista()))
+    executar(conexao, sql, tuple(outro.para_lista()))
+    return True
 
 
 def curso_existe(conexao, codigo, codigo_nivel):
@@ -196,13 +230,10 @@ def curso_existe(conexao, codigo, codigo_nivel):
     Returns:
         bool: True se o curso existe.
     """
-    linhas = consultar(conexao,
-                       "SELECT codigo FROM curso WHERE codigo = ? AND codigo_nivel = ?",
-                       (codigo, codigo_nivel.upper()))
-    return len(linhas) > 0
+    return existe(conexao,
+                  "SELECT codigo FROM curso WHERE codigo = ? AND codigo_nivel = ?",
+                  (codigo, codigo_nivel.upper()))
 
-
-# ------------------------------------------------------- Consultas e buscas
 
 def contar_registros(conexao, tabela):
     """Conta quantos registros existem em uma tabela.
@@ -214,43 +245,44 @@ def contar_registros(conexao, tabela):
     Returns:
         int: quantidade de registros.
     """
-    # O nome da tabela vem do próprio programa, nunca do usuário
     linhas = consultar(conexao, f"SELECT COUNT(*) FROM {tabela}")
     return linhas[0][0]
 
 
-def montar_filtro(coluna, valor):
+def montar_filtro(coluna, valor, tipo):
     """Monta o trecho WHERE de uma busca.
 
     Texto é buscado por parte (LIKE '%valor%', sem diferenciar maiúsculas);
-    número é buscado pelo valor exato.
+    número e data são buscados pelo valor exato.
 
     Args:
         coluna (str): coluna (ou expressão SQL) a ser filtrada.
         valor (str | int): valor procurado.
+        tipo (str): 'texto', 'inteiro' ou 'data'.
 
     Returns:
         tuple: (trecho_sql, parametros).
     """
     if coluna is None:
         return "", ()
-    if isinstance(valor, str):
+    if tipo == "texto":
         return f" WHERE {coluna} LIKE ?", ("%" + valor + "%",)
     return f" WHERE {coluna} = ?", (valor,)
 
 
-def buscar_cursos(conexao, coluna=None, valor=None):
+def buscar_cursos(conexao, coluna=None, valor=None, tipo="texto"):
     """Lista os cursos, com filtro opcional.
 
     Args:
         conexao (sqlite3.Connection): conexão com o banco.
         coluna (str, optional): coluna a filtrar (ex.: 'nome').
         valor (str | int, optional): valor procurado.
+        tipo (str, optional): 'texto', 'inteiro' ou 'data'. Padrão é 'texto'.
 
     Returns:
         list: lista de objetos Curso.
     """
-    filtro, parametros = montar_filtro(coluna, valor)
+    filtro, parametros = montar_filtro(coluna, valor, tipo)
     linhas = consultar(conexao, SQL_CURSO + filtro + " ORDER BY nome", parametros)
     cursos = []
     for linha in linhas:
@@ -258,18 +290,19 @@ def buscar_cursos(conexao, coluna=None, valor=None):
     return cursos
 
 
-def buscar_alunos(conexao, coluna=None, valor=None):
+def buscar_alunos(conexao, coluna=None, valor=None, tipo="texto"):
     """Lista os alunos, com filtro opcional.
 
     Args:
         conexao (sqlite3.Connection): conexão com o banco.
         coluna (str, optional): coluna a filtrar (ex.: 'nome', 'matricula').
         valor (str | int, optional): valor procurado.
+        tipo (str, optional): 'texto', 'inteiro' ou 'data'. Padrão é 'texto'.
 
     Returns:
         list: lista de objetos Aluno.
     """
-    filtro, parametros = montar_filtro(coluna, valor)
+    filtro, parametros = montar_filtro(coluna, valor, tipo)
     linhas = consultar(conexao, SQL_ALUNO + filtro + " ORDER BY nome", parametros)
     alunos = []
     for linha in linhas:
@@ -279,18 +312,19 @@ def buscar_alunos(conexao, coluna=None, valor=None):
     return alunos
 
 
-def buscar_colaboradores(conexao, coluna=None, valor=None):
+def buscar_colaboradores(conexao, coluna=None, valor=None, tipo="texto"):
     """Lista os colaboradores, com filtro opcional.
 
     Args:
         conexao (sqlite3.Connection): conexão com o banco.
         coluna (str, optional): coluna a filtrar (ex.: 'secao').
         valor (str | int, optional): valor procurado.
+        tipo (str, optional): 'texto', 'inteiro' ou 'data'. Padrão é 'texto'.
 
     Returns:
         list: lista de objetos Colaborador.
     """
-    filtro, parametros = montar_filtro(coluna, valor)
+    filtro, parametros = montar_filtro(coluna, valor, tipo)
     linhas = consultar(conexao, SQL_COLABORADOR + filtro + " ORDER BY nome",
                        parametros)
     colaboradores = []
@@ -300,18 +334,19 @@ def buscar_colaboradores(conexao, coluna=None, valor=None):
     return colaboradores
 
 
-def buscar_outros(conexao, coluna=None, valor=None):
+def buscar_outros(conexao, coluna=None, valor=None, tipo="texto"):
     """Lista os usuários externos (Outros), com filtro opcional.
 
     Args:
         conexao (sqlite3.Connection): conexão com o banco.
         coluna (str, optional): coluna a filtrar (ex.: 'documento').
         valor (str | int, optional): valor procurado.
+        tipo (str, optional): 'texto', 'inteiro' ou 'data'. Padrão é 'texto'.
 
     Returns:
         list: lista de objetos Outro.
     """
-    filtro, parametros = montar_filtro(coluna, valor)
+    filtro, parametros = montar_filtro(coluna, valor, tipo)
     linhas = consultar(conexao, SQL_OUTRO + filtro + " ORDER BY nome", parametros)
     outros = []
     for linha in linhas:
@@ -320,7 +355,24 @@ def buscar_outros(conexao, coluna=None, valor=None):
     return outros
 
 
-# ------------------------------------------------- Importação e exportação
+def linha_csv_valida(campos):
+    """Verifica se uma linha do CSV de alunos pode ser importada.
+
+    Args:
+        campos (list): valores da linha, já separados pela vírgula.
+
+    Returns:
+        bool: True se a linha tem todas as colunas, nome, nível e números válidos.
+    """
+    if len(campos) != TOTAL_COLUNAS_CSV:
+        return False
+    if campos[0].strip() == "" or campos[4].strip() == "":
+        return False
+    for posicao in COLUNAS_NUMERICAS_CSV:
+        if not campos[posicao].strip().isdigit():
+            return False
+    return True
+
 
 def importar_alunos_csv(conexao, caminho_csv):
     """Importa os alunos do arquivo CSV enviado pela Diretoria Acadêmica.
@@ -335,7 +387,7 @@ def importar_alunos_csv(conexao, caminho_csv):
 
     Args:
         conexao (sqlite3.Connection): conexão com o banco.
-        caminho_csv (Path): caminho do arquivo CSV.
+        caminho_csv (str): caminho do arquivo CSV.
 
     Returns:
         tuple: (importados, repetidos, invalidos, cursos_criados).
@@ -344,78 +396,99 @@ def importar_alunos_csv(conexao, caminho_csv):
     repetidos = 0
     invalidos = 0
     cursos_criados = 0
-    ano_atual = datetime.now().year
     data_cadastro = data_hoje()
+    ano_atual = int(data_cadastro[6:])
 
-    # utf-8-sig ignora o caractere especial (BOM) do início do arquivo
+    # utf-8-sig: sem isso o Windows lê os acentos do CSV errado
     with open(caminho_csv, "r", encoding="utf-8-sig") as arquivo:
-        leitor = csv.DictReader(arquivo)
-        for linha in leitor:
-            nome = linha["nome"].strip()
-            nivel = linha["nivel"].strip().upper()
-            try:
-                matricula = int(linha["ra"])
-                codigo_curso = int(linha["curso"])
-                semestre_ingresso = int(linha["pingr"])
-                ano_ingresso = int(linha["ingresso"])
-                semestre_maximo = int(linha["perult"])
-                ano_maximo = int(linha["aperult"])
-            except ValueError:
-                invalidos += 1
-                continue
-            if nome == "" or nivel == "":
-                invalidos += 1
-                continue
-
-            nome_social = linha["nome_social"].strip()
-            if nome_social == "":
-                nome_social = None
-
-            # Cria o curso que ainda não existe, para não quebrar a chave estrangeira
-            if not curso_existe(conexao, codigo_curso, nivel):
-                nome_curso = f"Curso {codigo_curso} - {nome_do_nivel(nivel)} (importado)"
-                inserir_curso(conexao, Curso(codigo_curso, nivel, nome_curso, "", ""),
-                              confirmar=False)
-                cursos_criados += 1
-
-            ativo = 0
-            if ano_maximo >= ano_atual:
-                ativo = 1
-
-            aluno = Aluno(nome, nome_social, data_cadastro, matricula,
-                          codigo_curso, nivel, semestre_ingresso, ano_ingresso,
-                          semestre_maximo, ano_maximo, ativo)
-            # Grava tudo de uma vez no final (commit único), o que é bem mais rápido
-            if inserir_aluno(conexao, aluno, confirmar=False):
-                importados += 1
+        primeira_linha = True
+        for linha in arquivo:
+            if primeira_linha:
+                primeira_linha = False
             else:
-                repetidos += 1
+                campos = linha.strip().split(",")
+                if not linha_csv_valida(campos):
+                    invalidos += 1
+                else:
+                    resultado = importar_aluno(conexao, campos, data_cadastro, ano_atual)
+                    if resultado == "repetido":
+                        repetidos += 1
+                    else:
+                        importados += 1
+                        if resultado == "importado_com_curso":
+                            cursos_criados += 1
 
     conexao.commit()
     return importados, repetidos, invalidos, cursos_criados
+
+
+def importar_aluno(conexao, campos, data_cadastro, ano_atual):
+    """Grava no banco (sem commit) um aluno vindo de uma linha válida do CSV.
+
+    Args:
+        conexao (sqlite3.Connection): conexão com o banco.
+        campos (list): valores da linha do CSV.
+        data_cadastro (str): data do cadastro (dd/mm/AAAA).
+        ano_atual (int): ano atual, para definir se o aluno está ativo.
+
+    Returns:
+        str: 'importado', 'repetido' ou 'importado_com_curso' (quando o curso
+        também precisou ser criado).
+    """
+    nome = campos[0].strip()
+    nome_social = campos[1].strip()
+    if nome_social == "":
+        nome_social = None
+    matricula = int(campos[2])
+    codigo_curso = int(campos[3])
+    nivel = campos[4].strip().upper()
+    semestre_ingresso = int(campos[5])
+    ano_ingresso = int(campos[7])
+    semestre_maximo = int(campos[8])
+    ano_maximo = int(campos[10])
+
+    ativo = 0
+    if ano_maximo >= ano_atual:
+        ativo = 1
+
+    aluno = Aluno(nome, nome_social, data_cadastro, matricula,
+                  codigo_curso, nivel, semestre_ingresso, ano_ingresso,
+                  semestre_maximo, ano_maximo, ativo)
+    if existe(conexao,
+              "SELECT usuario FROM aluno WHERE usuario = ? OR matricula = ?",
+              (aluno.usuario, aluno.matricula)):
+        return "repetido"
+
+    # O curso precisa existir antes do aluno (chave estrangeira)
+    curso_criado = False
+    if not curso_existe(conexao, codigo_curso, nivel):
+        nome_curso = f"Curso {codigo_curso} - {nome_do_nivel(nivel)} (importado)"
+        inserir_curso(conexao, Curso(codigo_curso, nivel, nome_curso, "", ""),
+                      confirmar=False)
+        curso_criado = True
+
+    inserir_aluno(conexao, aluno, confirmar=False)
+    if curso_criado:
+        return "importado_com_curso"
+    return "importado"
 
 
 def exportar_csv(caminho_arquivo, cabecalho, linhas):
     """Grava uma listagem em arquivo CSV (separado por ';', abre no Excel).
 
     Args:
-        caminho_arquivo (Path): caminho do arquivo a ser criado.
+        caminho_arquivo (str): caminho do arquivo a ser criado.
         cabecalho (list): nomes das colunas.
         linhas (list): lista de listas com os valores.
     """
-    # Cria a pasta de destino se ela ainda não existir
-    caminho_arquivo.parent.mkdir(exist_ok=True)
-    with open(caminho_arquivo, "w", newline="", encoding="utf-8-sig") as arquivo:
-        escritor = csv.writer(arquivo, delimiter=";")
-        escritor.writerow(cabecalho)
-        escritor.writerows(linhas)
-
-
-# Define a API pública do módulo: o que é importado com "from database import *"
-__all__ = [
-    "conectar", "padronizar_datas",
-    "inserir_curso", "inserir_aluno", "inserir_colaborador", "inserir_outro",
-    "curso_existe", "contar_registros",
-    "buscar_cursos", "buscar_alunos", "buscar_colaboradores", "buscar_outros",
-    "importar_alunos_csv", "exportar_csv",
-]
+    # utf-8-sig: faz o Excel reconhecer os acentos
+    with open(caminho_arquivo, "w", encoding="utf-8-sig") as arquivo:
+        arquivo.write(";".join(cabecalho) + "\n")
+        for linha in linhas:
+            valores = []
+            for valor in linha:
+                if valor is None:
+                    valores.append("")
+                else:
+                    valores.append(str(valor).replace(";", ","))
+            arquivo.write(";".join(valores) + "\n")

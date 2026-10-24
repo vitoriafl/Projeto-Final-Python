@@ -11,7 +11,6 @@ from models.pessoa import Pessoa
 class Colaborador(Pessoa):
     """Representa um colaborador (professor ou funcionário)."""
 
-    # Nomes das colunas, na mesma ordem de para_lista() (usado na exportação CSV)
     CAMPOS = [
         "usuario", "nome", "nome_social", "matricula", "funcao",
         "email", "secao", "expiracao",
@@ -37,6 +36,14 @@ class Colaborador(Pessoa):
         self.email = email
         self.secao = secao
         self.expiracao = expiracao
+
+    def obter_matricula(self):
+        """Retorna a matrícula do colaborador.
+
+        Returns:
+            int: número de matrícula.
+        """
+        return self.matricula
 
     def exibir(self):
         """Monta um texto com todos os dados do colaborador.

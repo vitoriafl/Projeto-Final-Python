@@ -18,10 +18,6 @@ Funções:
 
 from datetime import datetime
 
-# Formato de data exigido pelo enunciado do projeto
-FORMATO_DATA = "%d/%m/%Y"
-
-# Níveis de curso (letra usada no banco/CSV -> nome por extenso)
 NIVEIS = {
     "D": "Doutorado",
     "M": "Mestrado",
@@ -29,6 +25,8 @@ NIVEIS = {
     "G": "Graduação",
     "P": "Especial",
 }
+
+DIAS_POR_MES = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 
 
 def gerar_usuario(nome, matricula):
@@ -45,8 +43,20 @@ def gerar_usuario(nome, matricula):
     return primeira_letra + str(matricula)
 
 
+def ano_bissexto(ano):
+    """Verifica se um ano é bissexto.
+
+    Args:
+        ano (int): ano a ser verificado.
+
+    Returns:
+        bool: True se o ano for bissexto.
+    """
+    return ano % 4 == 0 and (ano % 100 != 0 or ano % 400 == 0)
+
+
 def validar_data(data):
-    """Verifica se a data informada está no formato dd/mm/AAAA.
+    """Verifica se a data informada está no formato dd/mm/AAAA e existe.
 
     Args:
         data (str): data a ser verificada.
@@ -54,20 +64,28 @@ def validar_data(data):
     Returns:
         bool: True se a data for válida, False caso contrário.
     """
-    try:
-        datetime.strptime(data, FORMATO_DATA)
-        return True
-    except ValueError:
+    partes = data.split("/")
+    if len(partes) != 3:
         return False
 
+    dia = partes[0]
+    mes = partes[1]
+    ano = partes[2]
+    if not (dia.isdigit() and mes.isdigit() and ano.isdigit()):
+        return False
+    if len(dia) != 2 or len(mes) != 2 or len(ano) != 4:
+        return False
 
-def data_hoje():
-    """Retorna a data atual no formato dd/mm/AAAA.
+    dia = int(dia)
+    mes = int(mes)
+    ano = int(ano)
+    if mes < 1 or mes > 12:
+        return False
 
-    Returns:
-        str: data de hoje (ex.: '23/10/2026').
-    """
-    return datetime.now().strftime(FORMATO_DATA)
+    maximo_de_dias = DIAS_POR_MES[mes - 1]
+    if mes == 2 and ano_bissexto(ano):
+        maximo_de_dias = 29
+    return dia >= 1 and dia <= maximo_de_dias
 
 
 def converter_data_iso(data):
@@ -82,11 +100,21 @@ def converter_data_iso(data):
     Returns:
         str: data no formato dd/mm/AAAA.
     """
-    try:
-        data_convertida = datetime.strptime(data, "%Y-%m-%d")
-        return data_convertida.strftime(FORMATO_DATA)
-    except (ValueError, TypeError):
+    partes = data.split("-")
+    if len(partes) != 3:
         return data
+    return partes[2] + "/" + partes[1] + "/" + partes[0]
+
+
+def data_hoje():
+    """Retorna a data atual no formato dd/mm/AAAA.
+
+    Returns:
+        str: data de hoje (ex.: '23/10/2026').
+    """
+    # str(datetime.now()) começa com a data no formato AAAA-MM-DD
+    agora = str(datetime.now())
+    return converter_data_iso(agora[:10])
 
 
 def nome_do_nivel(letra):
@@ -142,10 +170,10 @@ def ler_inteiro(mensagem):
         int: número digitado.
     """
     while True:
-        try:
-            return int(input(mensagem))
-        except ValueError:
-            print("Digite apenas números inteiros.")
+        texto = input(mensagem).strip()
+        if texto.isdigit():
+            return int(texto)
+        print("Digite apenas números inteiros (0 a 9).")
 
 
 def ler_data(mensagem):

@@ -39,6 +39,17 @@ class Pessoa:
             return self.nome_social
         return self.nome
 
+    def obter_matricula(self):
+        """Retorna a matrícula da pessoa.
+
+        Pessoas sem matrícula (ex.: Outro) devolvem texto vazio. As classes
+        filhas que têm matrícula sobrescrevem este método (polimorfismo).
+
+        Returns:
+            str: texto vazio.
+        """
+        return ""
+
     def exibir(self):
         """Monta um texto com os dados básicos da pessoa.
 

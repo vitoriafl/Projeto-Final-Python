@@ -11,7 +11,6 @@ from models.pessoa import Pessoa
 class Outro(Pessoa):
     """Representa um usuário externo (visitante, prestador, aluno de projeto)."""
 
-    # Nomes das colunas, na mesma ordem de para_lista() (usado na exportação CSV)
     CAMPOS = ["usuario", "nome", "nome_social", "documento", "motivo", "expiracao"]
 
     def __init__(self, usuario, nome, nome_social, documento, motivo, expiracao):

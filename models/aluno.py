@@ -15,7 +15,6 @@ class Aluno(Pessoa):
     O usuário é gerado automaticamente: primeira letra do nome + matrícula.
     """
 
-    # Nomes das colunas, na mesma ordem de para_lista() (usado na exportação CSV)
     CAMPOS = [
         "usuario", "nome", "nome_social", "data_cadastro", "matricula",
         "codigo_curso", "nivel_curso", "semestre_ingresso", "ano_ingresso",
@@ -51,6 +50,14 @@ class Aluno(Pessoa):
         self.semestre_maximo = semestre_maximo
         self.ano_maximo = ano_maximo
         self.ativo = ativo
+
+    def obter_matricula(self):
+        """Retorna a matrícula (RA) do aluno.
+
+        Returns:
+            int: número de matrícula.
+        """
+        return self.matricula
 
     def situacao(self):
         """Retorna a situação do aluno por extenso.

@@ -48,8 +48,6 @@ CSV_IMPORT_PATH = BASE_DIR / "suporte" / "dados_alunos_importar.csv"
 EXPORT_DIR = BASE_DIR / "exportacoes"
 
 
-# --------------------------------------------------------------- Auxiliares
-
 def mostrar_lista(titulo, itens):
     """Exibe na tela uma listagem de objetos (alunos, cursos etc.).
 
@@ -74,14 +72,15 @@ def escolher_filtro(opcoes):
             é 'texto', 'inteiro' ou 'data'.
 
     Returns:
-        tuple: (coluna, valor) ou (None, None) se a opção for inválida.
+        tuple: (coluna, valor, tipo) ou (None, None, None) se a opção
+        for inválida.
     """
     for numero in range(len(opcoes)):
         print(f"{numero + 1}. {opcoes[numero][0]}")
     escolha = ler_inteiro("Buscar por: ")
     if escolha < 1 or escolha > len(opcoes):
         print("Opção inválida.")
-        return None, None
+        return None, None, None
 
     rotulo, coluna, tipo = opcoes[escolha - 1]
     if tipo == "inteiro":
@@ -90,7 +89,7 @@ def escolher_filtro(opcoes):
         valor = ler_data(f"{rotulo} (dd/mm/AAAA): ")
     else:
         valor = ler_texto(f"{rotulo} (pode ser parte do texto): ")
-    return coluna, valor
+    return coluna, valor, tipo
 
 
 def escolher_curso(conexao):
@@ -110,8 +109,6 @@ def escolher_curso(conexao):
             return codigo, nivel
         print("Curso não encontrado. Confira o código e o nível.")
 
-
-# ---------------------------------------------------------------- Cadastros
 
 def cadastrar_aluno(conexao):
     """Lê os dados de um aluno e grava no banco.
@@ -240,8 +237,6 @@ def menu_cadastros(conexao):
             print("Opção inválida.")
 
 
-# ---------------------------------------------------------------- Buscas
-
 def menu_buscas(conexao):
     """Submenu de consultas e buscas.
 
@@ -259,7 +254,7 @@ def menu_buscas(conexao):
         opcao = input("Escolha: ").strip()
 
         if opcao == "1":
-            coluna, valor = escolher_filtro([
+            coluna, valor, tipo = escolher_filtro([
                 ("Nome", "nome", "texto"),
                 ("Matrícula", "matricula", "inteiro"),
                 ("Ano de entrada", "ano_ingresso", "inteiro"),
@@ -268,10 +263,10 @@ def menu_buscas(conexao):
             ])
             if coluna is not None:
                 mostrar_lista("Alunos encontrados",
-                              buscar_alunos(conexao, coluna, valor))
+                              buscar_alunos(conexao, coluna, valor, tipo))
         elif opcao == "2":
             # A tabela colaborador não possui data de cadastro; usa-se a expiração
-            coluna, valor = escolher_filtro([
+            coluna, valor, tipo = escolher_filtro([
                 ("Nome", "nome", "texto"),
                 ("Matrícula", "CAST(matricula AS TEXT)", "texto"),
                 ("Setor (seção)", "secao", "texto"),
@@ -280,9 +275,9 @@ def menu_buscas(conexao):
             ])
             if coluna is not None:
                 mostrar_lista("Funcionários encontrados",
-                              buscar_colaboradores(conexao, coluna, valor))
+                              buscar_colaboradores(conexao, coluna, valor, tipo))
         elif opcao == "3":
-            coluna, valor = escolher_filtro([
+            coluna, valor, tipo = escolher_filtro([
                 ("Nome", "nome", "texto"),
                 ("Nome social", "nome_social", "texto"),
                 ("Documento", "documento", "texto"),
@@ -290,27 +285,25 @@ def menu_buscas(conexao):
             ])
             if coluna is not None:
                 mostrar_lista("Outros encontrados",
-                              buscar_outros(conexao, coluna, valor))
+                              buscar_outros(conexao, coluna, valor, tipo))
         elif opcao == "4":
             nome = ler_texto("Nome (pode ser parte do nome): ")
             mostrar_lista("Alunos", buscar_alunos(conexao, "nome", nome))
             mostrar_lista("Funcionários", buscar_colaboradores(conexao, "nome", nome))
             mostrar_lista("Outros", buscar_outros(conexao, "nome", nome))
         elif opcao == "5":
-            coluna, valor = escolher_filtro([
+            coluna, valor, tipo = escolher_filtro([
                 ("Nome", "nome", "texto"),
                 ("Nível (D, M, T, G ou P)", "codigo_nivel", "texto"),
             ])
             if coluna is not None:
                 mostrar_lista("Cursos encontrados",
-                              buscar_cursos(conexao, coluna, valor))
+                              buscar_cursos(conexao, coluna, valor, tipo))
         elif opcao == "0":
             break
         else:
             print("Opção inválida.")
 
-
-# ---------------------------------------------------------------- Relatórios
 
 def menu_relatorios(conexao):
     """Submenu de relatórios em texto simples.
@@ -356,8 +349,6 @@ def menu_relatorios(conexao):
             print("Opção inválida.")
 
 
-# ------------------------------------------------- Importação e exportação
-
 def menu_importar(conexao):
     """Importa alunos de um arquivo CSV.
 
@@ -369,15 +360,15 @@ def menu_importar(conexao):
     caminho = ler_texto_opcional("Caminho do CSV (Enter para usar o padrão): ")
     if caminho is None:
         caminho = CSV_IMPORT_PATH
-    else:
-        caminho = Path(caminho)
 
-    if not caminho.exists():
+    print("Importando, aguarde...")
+    try:
+        resultado = importar_alunos_csv(conexao, caminho)
+    except FileNotFoundError:
         print("Arquivo não encontrado.")
         return
 
-    print("Importando, aguarde...")
-    importados, repetidos, invalidos, cursos_criados = importar_alunos_csv(conexao, caminho)
+    importados, repetidos, invalidos, cursos_criados = resultado
     print(f"Alunos importados:            {importados}")
     print(f"Já cadastrados (ignorados):   {repetidos}")
     print(f"Linhas inválidas (ignoradas): {invalidos}")
@@ -398,12 +389,8 @@ def linhas_resumo(tipo, pessoas):
     """
     linhas = []
     for pessoa in pessoas:
-        # Outros não têm matrícula; nesse caso a coluna fica vazia
-        if isinstance(pessoa, Outro):
-            matricula = ""
-        else:
-            matricula = pessoa.matricula
-        linhas.append([tipo, pessoa.usuario, pessoa.nome, pessoa.nome_social, matricula])
+        linhas.append([tipo, pessoa.usuario, pessoa.nome, pessoa.nome_social,
+                       pessoa.obter_matricula()])
     return linhas
 
 
@@ -419,7 +406,11 @@ def salvar_exportacao(nome_arquivo, cabecalho, linhas):
         print("Nenhum registro encontrado. Nada foi exportado.")
         return
     caminho = EXPORT_DIR / nome_arquivo
-    exportar_csv(caminho, cabecalho, linhas)
+    try:
+        exportar_csv(caminho, cabecalho, linhas)
+    except FileNotFoundError:
+        print(f"Pasta de exportação não encontrada: {EXPORT_DIR}")
+        return
     print(f"{len(linhas)} registro(s) exportado(s) para: {caminho}")
 
 
@@ -475,7 +466,7 @@ def menu_exportar(conexao):
             salvar_exportacao("todos.csv", cabecalho_resumo, linhas)
         elif opcao == "5":
             codigo = ler_inteiro("Código do curso: ")
-            alunos = buscar_alunos(conexao, "codigo_curso", codigo)
+            alunos = buscar_alunos(conexao, "codigo_curso", codigo, "inteiro")
             salvar_exportacao(f"alunos_curso_{codigo}.csv", Aluno.CAMPOS,
                               para_linhas(alunos))
         elif opcao == "6":
@@ -495,8 +486,6 @@ def menu_exportar(conexao):
         else:
             print("Opção inválida.")
 
-
-# ---------------------------------------------------------------- Principal
 
 def main():
     """Função principal: conecta ao banco e exibe o menu principal."""
@@ -532,5 +521,4 @@ def main():
     conexao.close()
 
 
-if __name__ == "__main__":
-    main()
+main()
