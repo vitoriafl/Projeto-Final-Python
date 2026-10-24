@@ -1,0 +1,2 @@
+# O projeto usa apenas a biblioteca padrão do Python (sqlite3, csv, datetime, pathlib).
+# Não é necessário instalar nenhum pacote extra. Versão recomendada: Python 3.10 ou superior.

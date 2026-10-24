@@ -26,3 +26,21 @@ projeto_final/
 ├── main.py                   # Ponto de entrada com menu interativo (CLI)
 ├── README.md
 └── requirements.txt
+```
+
+> Observação: nesta versão as pastas `models/` e `utils/` ficam na raiz do projeto e o `main.py` fica em `src/`.
+
+## Como executar
+Na pasta raiz do projeto:
+```text
+python src/main.py
+```
+Não é necessário instalar pacotes extras (apenas a biblioteca padrão do Python).
+
+## Funcionalidades
+- **Cadastros:** Aluno (usuário gerado automaticamente: 1ª letra do nome + matrícula), Colaborador, Outros e Curso.
+- **Consultas e Buscas:** alunos, funcionários, outros, todos (por nome) e cursos.
+- **Relatórios:** totais e listagens em texto simples.
+- **Importar:** alunos do arquivo CSV da Diretoria Acadêmica. Cursos inexistentes são criados automaticamente e matrículas repetidas são ignoradas.
+- **Exportar:** listagens em CSV (separador `;`) na pasta `exportacoes/`.
+- As datas seguem o formato `dd/mm/AAAA`. As datas de exemplo que estavam no banco em `AAAA-MM-DD` são convertidas ao iniciar o sistema.
